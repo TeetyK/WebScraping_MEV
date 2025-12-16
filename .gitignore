@@ -1,0 +1,14 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+nesdc_data/
+
+# Virtual environments
+.venv
+get.xlsx
+google_results.csv
+test.ipynb
