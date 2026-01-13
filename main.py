@@ -1,3 +1,4 @@
+# import ipdb; ipdb.set_trace()
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
@@ -6,12 +7,22 @@ from selenium.webdriver.chrome.options import Options
 import undetected_chromedriver as uc
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.common.desired_capabilities import DesiredCapabilities
 import time
 import random
 import pandas as pd
 import numpy as np
 import os
 import glob
+import re
+import json
+import requests
+import io
+import pdfplumber
+import warnings
+warnings.simplefilter(action='ignore', category=FutureWarning)
+warnings.simplefilter(action='ignore',category=DeprecationWarning)
+
 def cleaning_data(df:pd.DataFrame,df2:pd.DataFrame,df3:pd.DataFrame,df4:pd.DataFrame,df5:pd.DataFrame)->pd.DataFrame:
     df.columns = df.iloc[3,:]
     df = df.iloc[4:,:]
@@ -76,8 +87,8 @@ def cpi_base():
             cpi_value = cells[1].text
             
             print("\n" + "="*30)
-            print(f"🗓️ เดือนล่าสุด: {month}")
-            print(f"💰 ค่า CPI    : {cpi_value}")
+            print(f"เดือนล่าสุด: {month}")
+            print(f"ค่า CPI    : {cpi_value}")
             print("="*30)
             
         else:
@@ -145,7 +156,6 @@ def GDP():
         print(data)
     except Exception as e:
         print(f"\nError : {e}")
-
     finally:
         driver.quit()
         driver.quit = lambda: None
@@ -194,8 +204,164 @@ def main():
         print(f"\nบันทึกไฟล์สำเร็จ! ชื่อไฟล์: {filename}")
     else:
         print("ไม่พบข้อมูล (อาจจะโดน Google บล็อก หรือเปลี่ยนโครงสร้างเว็บ)")
+def cpi_core():
+    caps = DesiredCapabilities.CHROME
+    caps['goog:loggingPrefs'] = {'performance': 'ALL'}
+    options = uc.ChromeOptions()
+    options.binary_location = r'F:\chrome-win64\chrome-win64\chrome.exe'
+    options.add_argument('--headless')
 
+    driver = uc.Chrome(options=options , desired_capabilities=caps)
+
+    try:
+        url = "https://index.tpso.go.th/cpi/index-analysis-report/1"
+        print(f"กำลังเข้าเว็บ {url}")
+        driver.get(url) 
+        time.sleep(random.uniform(10, 18))
+        driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+        time.sleep(random.uniform(10, 18))
+        html_source = driver.page_source
+        pdf_pattern = r'(https?://[^\s"\']+\.pdf)'
+        found_links = re.findall(pdf_pattern, html_source)
+        unique_links = list(set(found_links))
+        if unique_links:
+            print(f"{len(unique_links)}")
+            for link in unique_links:
+                print(link)
+                if "tpso.go.th" in link:
+                    print("Like this.")
+        else:
+            print("NOT FOUND")
+        pdf_url = None
+        logs = driver.get_log('performance')
+        for entry in logs:
+            try:
+                message_obj = json.loads(entry.get('message'))
+                message = message_obj.get('message')
+                method = message.get('method')
+
+                if method == 'Network.responseReceived':
+                    response = message.get('params', {}).get('response', {})
+                    mime_type = response.get('mimeType', '')
+                    found_url = response.get('url', '')
+
+                    if 'application/pdf' in mime_type or found_url.endswith('.pdf'):
+                        if "blob:" not in found_url:
+                            print(f"เจอ URL แล้ว! -> {found_url}")
+                            pdf_url = found_url
+                            break
+            except Exception as e:
+                continue
+
+        if pdf_url:
+            print("-" * 30)
+            print(f"✅ สำเร็จ! URL จริงของ PDF คือ:\n{pdf_url}")
+            print("-" * 30)
+        else:
+            print("❌ หาไม่เจอ:")
+        response = requests.get(pdf_url)
+        if response.status_code == 200:
+            with pdfplumber.open(io.BytesIO(response.content)) as pdf:
+                print("\n" + "="*20 + " เนื้อหาแรกของ PDF " + "="*20)
+                page1 = pdf.pages[-2]
+                text = page1.extract_text()
+                print(text)
+                print("\n" + "="*20 + "ข้อมูลตาราง" + "="*20)
+                tables = page1.extract_tables()
+                if tables:
+                    for i , table in enumerate(tables):
+                        print(f"ตาราง {i+1}")
+                        df = pd.DataFrame(table[1:], columns=table[0])
+                        print(df)
+                        month_cpi_core = df.columns[2]
+                        print(month_cpi_core)
+                        df = df.iloc[2:,:]
+                        col = ['รายการ','สัดส่วน/น้ำหนัก','ดัชนี ธค 68','ดัชนี ธค 67','Change ธค M/M','Change ธค Y/Y','Change ธค A/A',
+                                'ดัชนี พย 68','Change พย M/M','Change พย Y/Y','Change พย A/A',
+                                ]
+                        df.columns = col
+                        df = df[df['รายการ'].isin(['ดัชนีรำคำผู้บริโภคพนื้ ฐำน *'])][['ดัชนี ธค 68','Change ธค Y/Y']]
+                        df.columns = ['Core CPI','(Inflation)']
+                        df.to_excel(f"table_{i+1}.xlsx", index=False)
+                        print(df)
+                else:
+                    print("NOT FOUND")
+
+    except Exception as e:
+        print(f"\nError : {e}")
+    finally:
+        driver.quit()
+        driver.quit = lambda: None
+def set_index():
+    caps = DesiredCapabilities.CHROME
+    caps['goog:loggingPrefs'] = {'performance': 'ALL'}
+    options = uc.ChromeOptions()
+    options.page_load_strategy = 'eager'
+    options.binary_location = r'F:\chrome-win64\chrome-win64\chrome.exe'
+    options.add_argument('--headless --disable-popup-blocking')
+    # options.add_argument('--disable-popup-blocking')
+
+    driver = uc.Chrome(options=options , desired_capabilities=caps)
+    driver.set_window_size(1920, 1080) # จอใหญ่ไว้ก่อน
+    try:
+        url = "https://th.investing.com/indices/thailand-set-historical-data"
+        print(f"กำลังเข้าเว็บ {url}")
+        try:
+            driver.get(url)
+        except:
+            driver.execute_script("window.stop();") 
+        wait = WebDriverWait(driver,6)
+        try:
+            close_btn = driver.find_element(By.CSS_SELECTOR, "i.popupCloseIcon, div.e-dialog__close, svg[data-test='close-icon']")
+            close_btn.click()
+            print("ปิด Popup แล้ว")
+        except:
+            pass
+        # monthly_btn = wait.until(EC.element_to_be_clickable((By.XPATH,"//div[contains(text(),'รายเดือน')] | //a[contains(text(), 'รายเดือน')]")))
+        # monthly_btn = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "[data-period='2628000']")))
+        # dropdown_arrow = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, ".historical-data-v2_selection-arrow__3mX7U")))
+        # dropdown_arrow = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "[class*='selection-arrow']")))
+        # driver.execute_script("arguments[0].click();",dropdown_arrow)
+        # arrow_btn = wait.until(EC.element_to_be_clickable((
+        #     By.CSS_SELECTOR, 
+        #     "div[class*='selection-arrow'], span[class*='selection-arrow']"
+        # )))
+        # driver.execute_script("arguments[0].style.border='3px solid red'", arrow_btn)
+        # time.sleep(random.uniform(5, 6))
+        # monthly_option = wait.until(EC.element_to_be_clickable((By.XPATH, "//div[contains(text(), 'รายเดือน')] | //li[contains(text(), 'รายเดือน')] | //span[contains(text(), 'รายเดือน')]")))
+        # driver.execute_script("arguments[0].click();", arrow_btn)
+        # time.sleep(random.uniform(2, 3))
+        # monthly_option = wait.until(EC.element_to_be_clickable((
+        #     By.XPATH, 
+        #     "//div[contains(text(), 'รายเดือน')] | //li[contains(text(), 'รายเดือน')] | //span[contains(text(), 'รายเดือน')]"
+        # )))
+        # driver.execute_script("arguments[0].style.border='3px solid red'", monthly_option)
+        # driver.execute_script("arguments[0].click();", monthly_option)
+        time.sleep(random.uniform(2, 3))
+        driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+        time.sleep(random.uniform(2, 3))
+        dfs = pd.read_html(driver.page_source)
+        target_df = None
+        for df in dfs:
+            if 'วันเดือนปี' in df.columns or 'Date' in df.columns:
+                target_df = df
+                break
+        if target_df is not None:
+            print(target_df.head())
+            target_df.to_excel('set_index_historical_data.xlsx',index=False)
+        else:
+            print("NOT FOUND")
+
+
+    except Exception as e:
+        print(f"\nError : {e}")
+    finally:
+        driver.quit()
+        driver.quit = lambda: None
+    pass
 if __name__ == "__main__":
-    main()
-    GDP()
-    cpi_base()
+    # main()
+    # GDP()
+    # cpi_base()
+    # cpi_core()
+    set_index()
