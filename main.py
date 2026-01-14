@@ -8,6 +8,7 @@ import undetected_chromedriver as uc
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.common.desired_capabilities import DesiredCapabilities
+from selenium.webdriver.common.action_chains import ActionChains
 import time
 import random
 import pandas as pd
@@ -20,6 +21,7 @@ import requests
 import io
 import pdfplumber
 import warnings
+import sys
 warnings.simplefilter(action='ignore', category=FutureWarning)
 warnings.simplefilter(action='ignore',category=DeprecationWarning)
 
@@ -298,11 +300,13 @@ def set_index():
     options = uc.ChromeOptions()
     options.page_load_strategy = 'eager'
     options.binary_location = r'F:\chrome-win64\chrome-win64\chrome.exe'
-    options.add_argument('--headless --disable-popup-blocking')
-    # options.add_argument('--disable-popup-blocking')
-
+    options.add_argument('--headless=new')
+    options.add_argument('--disable-popup-blocking')
+    options.add_argument('--window-size=1920,1080')
+    options.add_argument('--start-maximized')
+    options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
     driver = uc.Chrome(options=options , desired_capabilities=caps)
-    driver.set_window_size(1920, 1080) # จอใหญ่ไว้ก่อน
+    driver.set_window_size(1920, 1080)
     try:
         url = "https://th.investing.com/indices/thailand-set-historical-data"
         print(f"กำลังเข้าเว็บ {url}")
@@ -311,35 +315,69 @@ def set_index():
         except:
             driver.execute_script("window.stop();") 
         wait = WebDriverWait(driver,6)
+        actions = ActionChains(driver)
         try:
             close_btn = driver.find_element(By.CSS_SELECTOR, "i.popupCloseIcon, div.e-dialog__close, svg[data-test='close-icon']")
             close_btn.click()
             print("ปิด Popup แล้ว")
         except:
             pass
-        # monthly_btn = wait.until(EC.element_to_be_clickable((By.XPATH,"//div[contains(text(),'รายเดือน')] | //a[contains(text(), 'รายเดือน')]")))
-        # monthly_btn = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "[data-period='2628000']")))
-        # dropdown_arrow = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, ".historical-data-v2_selection-arrow__3mX7U")))
-        # dropdown_arrow = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "[class*='selection-arrow']")))
-        # driver.execute_script("arguments[0].click();",dropdown_arrow)
-        # arrow_btn = wait.until(EC.element_to_be_clickable((
-        #     By.CSS_SELECTOR, 
-        #     "div[class*='selection-arrow'], span[class*='selection-arrow']"
-        # )))
-        # driver.execute_script("arguments[0].style.border='3px solid red'", arrow_btn)
-        # time.sleep(random.uniform(5, 6))
-        # monthly_option = wait.until(EC.element_to_be_clickable((By.XPATH, "//div[contains(text(), 'รายเดือน')] | //li[contains(text(), 'รายเดือน')] | //span[contains(text(), 'รายเดือน')]")))
-        # driver.execute_script("arguments[0].click();", arrow_btn)
-        # time.sleep(random.uniform(2, 3))
-        # monthly_option = wait.until(EC.element_to_be_clickable((
+        # TEST 3
+        print("\n1. อ่านค่าตารางปัจจุบัน...")
+        driver.execute_script("window.scrollBy(0, 300);")
+        old_date_text = ""
+        try:
+            first_date_elem = wait.until(EC.visibility_of_element_located((
+                By.CSS_SELECTOR, "table tbody tr:first-child td:first-child"
+            )))
+            old_date_text = first_date_elem.text.strip()
+            print(f"   -> ค่าเดิม (รายวัน): '{old_date_text}'")
+        except:
+            pass
+        print("\n2. กำลังกดเปลี่ยนเป็น 'รายเดือน'...")
+        dropdown_btn = wait.until(EC.element_to_be_clickable((By.XPATH, "//div[contains(@class, 'selection-arrow')]")))
+        actions.move_to_element(dropdown_btn).click().perform()
+        time.sleep(1)
+        monthly_option = wait.until(EC.element_to_be_clickable((
+            By.XPATH, 
+            "//div[contains(@class, 'menu-row') and .//span[contains(text(), 'รายเดือน')]]"
+        )))
+        actions.move_to_element(monthly_option).click().perform()
+        print("   -> จิ้มเลือกรายเดือนแล้ว!")
+        print("\n3. กำลังรอข้อมูลรายเดือน (ต้องขึ้นต้นด้วย '01')...")
+        is_monthly_loaded = False
+        max_wait_sec = 20 
+        for i in range(max_wait_sec):
+            try:
+                current_elem = driver.find_element(By.CSS_SELECTOR, "table tbody tr:first-child td:first-child")
+                current_text = current_elem.text.strip()
+                if current_text != old_date_text and current_text.startswith("01"):
+                    print(f"\n✅ ใช่เลย! ข้อมูลเปลี่ยนเป็นรายเดือนแล้ว: '{current_text}'")
+                    is_monthly_loaded = True
+                    break
+                else:
+                    sys.stdout.write(f".") 
+                    sys.stdout.flush()
+                    time.sleep(1)
+            except:
+                time.sleep(1)
+        if not is_monthly_loaded:
+            print("\n⚠️ หมดเวลา! ตารางยังไม่ยอมเปลี่ยนเป็นวันที่ 01 (ลองดูดข้อมูลเผื่อฟลุ๊ค)")
+        # dropdown_btn = wait.until(EC.element_to_be_clickable((
         #     By.XPATH, 
-        #     "//div[contains(text(), 'รายเดือน')] | //li[contains(text(), 'รายเดือน')] | //span[contains(text(), 'รายเดือน')]"
+        #     "//div[contains(@class, 'selection-arrow')]"
         # )))
-        # driver.execute_script("arguments[0].style.border='3px solid red'", monthly_option)
+        # driver.execute_script("arguments[0].style.border='3px solid red'", dropdown_btn)
+        # driver.execute_script("arguments[0].click();", dropdown_btn)
+        # time.sleep(random.uniform(5, 6))
+        # monthly_xpath = "//div[contains(@class, 'menu-row') and .//span[contains(text(), 'รายเดือน')]]"
+        # monthly_option = wait.until(EC.element_to_be_clickable((By.XPATH, monthly_xpath)))
+        # driver.execute_script("arguments[0].style.border='3px solid blue'", monthly_option)
         # driver.execute_script("arguments[0].click();", monthly_option)
         time.sleep(random.uniform(2, 3))
-        driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+        driver.execute_script("window.scrollTo(0, 500);")
         time.sleep(random.uniform(2, 3))
+        driver.execute_script("window.scrollTo(500, 0);")
         dfs = pd.read_html(driver.page_source)
         target_df = None
         for df in dfs:
