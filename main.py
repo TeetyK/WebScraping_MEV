@@ -363,17 +363,7 @@ def set_index():
                 time.sleep(1)
         if not is_monthly_loaded:
             print("\n⚠️ หมดเวลา! ตารางยังไม่ยอมเปลี่ยนเป็นวันที่ 01 (ลองดูดข้อมูลเผื่อฟลุ๊ค)")
-        # dropdown_btn = wait.until(EC.element_to_be_clickable((
-        #     By.XPATH, 
-        #     "//div[contains(@class, 'selection-arrow')]"
-        # )))
-        # driver.execute_script("arguments[0].style.border='3px solid red'", dropdown_btn)
-        # driver.execute_script("arguments[0].click();", dropdown_btn)
-        # time.sleep(random.uniform(5, 6))
-        # monthly_xpath = "//div[contains(@class, 'menu-row') and .//span[contains(text(), 'รายเดือน')]]"
-        # monthly_option = wait.until(EC.element_to_be_clickable((By.XPATH, monthly_xpath)))
-        # driver.execute_script("arguments[0].style.border='3px solid blue'", monthly_option)
-        # driver.execute_script("arguments[0].click();", monthly_option)
+
         time.sleep(random.uniform(2, 3))
         driver.execute_script("window.scrollTo(0, 500);")
         time.sleep(random.uniform(2, 3))
@@ -396,10 +386,107 @@ def set_index():
     finally:
         driver.quit()
         driver.quit = lambda: None
-    pass
+def land_house():
+    caps = DesiredCapabilities.CHROME
+    caps['goog:loggingPrefs'] = {'performance': 'ALL'}
+    options = uc.ChromeOptions()
+    options.page_load_strategy = 'eager'
+    options.binary_location = r'F:\chrome-win64\chrome-win64\chrome.exe'
+    options.add_argument('--headless=new')
+    options.add_argument('--disable-popup-blocking')
+    options.add_argument('--window-size=1920,1080')
+    options.add_argument('--start-maximized')
+    options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
+    driver = uc.Chrome(options=options , desired_capabilities=caps)
+    driver.set_window_size(1920, 1080)
+    try:
+        print("กำลังเข้าเว็บ...")
+        url = "https://tradingeconomics.com/thailand/housing-index"
+        try:
+            driver.get(url)
+        except:
+            driver.execute_script("window.stop();") 
+        # html_content = driver.page_source
+        wait = WebDriverWait(driver,6)
+        print("รอข้อมูลตาราง gen ขึ้นมา...")
+        try:
+            wait.until(EC.presence_of_element_located((By.CLASS_NAME, "highcharts-root")))
+            time.sleep(5) # รอให้เส้นกราฟวิ่งจนครบ
+        except:
+            print("⚠️ หาตัวกราฟไม่เจอ (อาจจะติด Cloudflare หรือเน็ตช้า)")
+        try:
+            max_btn = driver.find_element(By.XPATH, "//a[text()='MAX'] | //a[text()='10Y']")
+            driver.execute_script("arguments[0].click();", max_btn)
+            print("👉 กดปุ่มขยายเวลา (MAX/10Y) แล้ว")
+            time.sleep(3)
+        except:
+            print("ℹ️ ไม่เจอปุ่มขยายเวลา (จะดึงเท่าที่มี)")
+        print("📥 กำลังล้วงข้อมูลดิบ...")
+        script = """
+        try {
+            var chart = Highcharts.charts[0];
+            var series = chart.series[0]; 
+            var rawData = series.options.data; // ข้อมูลดิบ
+            
+            // ถ้าไม่มีใน options ให้ลองดูใน points (ข้อมูลที่ render แล้ว)
+            if (!rawData || rawData.length === 0) {
+                if (series.points) {
+                    return series.points.map(p => [p.x, p.y]);
+                }
+                return null;
+            }
+
+            // วนลูปเช็คข้อมูลทีละตัวแล้วแปลงให้เป็น [x, y]
+            var cleanData = rawData.map(item => {
+                // กรณี 1: เป็น Array อยู่แล้ว [time, val]
+                if (Array.isArray(item)) {
+                    return item; 
+                }
+                // กรณี 2: เป็น Object {x: time, y: val}
+                else if (typeof item === 'object' && item !== null) {
+                    return [item.x, item.y];
+                }
+                // กรณีอื่นๆ (กันเหนียว)
+                return null;
+            }).filter(item => item !== null); // ตัดตัวที่ error ทิ้ง
+
+            return cleanData;
+
+        } catch(e) {
+            return null;
+        }
+        """
+        
+        data = driver.execute_script(script)
+
+        if data:
+            print(f"✅ สำเร็จ! ดึงมาได้ {len(data)} รายการ")
+            df = pd.DataFrame(data, columns=['Timestamp', 'Housing_Index'])
+            print("🔎 เช็คข้อมูลดิบ 3 แถวแรก:")
+            print(df.head(3))
+            sample_ts = df['Timestamp'].iloc[0]
+            unit = 'ms' if len(str(int(sample_ts))) > 10 else 's'
+            df['Date'] = pd.to_datetime(df['Timestamp'], unit=unit)
+            result_df = df[['Date', 'Housing_Index']].sort_values(by='Date', ascending=False)
+            result_df['Date'] = result_df['Date'].dt.date # ตัดเวลาทิ้งเอาแต่วันที่
+            print("\nตัวอย่างข้อมูลที่แปลงแล้ว:")
+            print(result_df.head())
+            filename = "thailand_housing_index.xlsx"
+            result_df.to_excel(filename, index=False)
+            print(f"\n💾 บันทึกไฟล์เรียบร้อย: {filename}")
+            
+        else:
+            print("❌ ไม่พบข้อมูลในกราฟ")
+            driver.save_screenshot("error_debug.png")
+    except Exception as e:
+        print(f"\nError : {e}")
+    finally:
+        driver.quit()
+        driver.quit = lambda: None
 if __name__ == "__main__":
     # main()
     # GDP()
     # cpi_base()
     # cpi_core()
-    set_index()
+    # set_index()
+    land_house()
